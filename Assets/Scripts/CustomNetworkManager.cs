@@ -3,8 +3,9 @@ using UnityEngine;
 
 public class CustomNetworkManager : NetworkManager
 {
-    // 加new关键字，显式说明隐藏父类单例，消除CS0108警告
     public new static CustomNetworkManager singleton;
+
+    public static bool quitting = false;
 
     [Header("出生点")]
     public Transform spawnPointP1;
@@ -14,18 +15,21 @@ public class CustomNetworkManager : NetworkManager
     public GameObject basePrefab;
     public float basePosX = 6.5f;
 
-    private int playerCount = 0;
-
-    // 加new关键字，显式说明隐藏父类Awake，消除CS0114警告
-    private new void Awake()
+    public override void Awake()
     {
-        singleton = this;
+        base.Awake();
+
+        if (this != null)
+        {
+            singleton = this;
+        }
     }
 
-    // 服务端启动完成：生成网络砖墙 + 双方基地 + 本地钢墙
     public override void OnStartServer()
     {
         base.OnStartServer();
+        quitting = false;
+
         BrickSpawner.singleton.ServerSpawnBricks();
         SpawnBases();
 
@@ -35,10 +39,11 @@ public class CustomNetworkManager : NetworkManager
         }
     }
 
-    // 客户端连接成功：生成本地钢墙 + 隐藏主菜单
     public override void OnClientConnect()
     {
         base.OnClientConnect();
+
+        quitting = false;
 
         if (SteelWallSpawner.singleton != null)
         {
@@ -51,31 +56,92 @@ public class CustomNetworkManager : NetworkManager
         }
     }
 
-    // 生成左右两个基地并标记归属
+    public override void OnClientDisconnect()
+    {
+        base.OnClientDisconnect();
+
+        if (quitting) return;
+        if (GameManager.singleton == null) return;
+        if (GameManager.singleton.isGameOver) return;
+
+        GameManager.singleton.ShowGameOverUI("房主已断开", TankController.ResultOpponentLeft);
+    }
+
     void SpawnBases()
     {
         GameObject leftBase = Instantiate(basePrefab, new Vector3(-basePosX, 0, 0), Quaternion.identity);
+        leftBase.GetComponent<Base>().ownerSlot = 0;
         NetworkServer.Spawn(leftBase);
-        leftBase.GetComponent<Base>().ownerConnectionId = 0;
 
         GameObject rightBase = Instantiate(basePrefab, new Vector3(basePosX, 0, 0), Quaternion.identity);
+        rightBase.GetComponent<Base>().ownerSlot = 1;
         NetworkServer.Spawn(rightBase);
-        rightBase.GetComponent<Base>().ownerConnectionId = 1;
     }
 
-    // 玩家加入时在对应出生点生成坦克
+    // 找一个没被占用的槽位（0 或 1），都占了就返回 1
+    int FindFreeSlot()
+    {
+        for (int slot = 0; slot <= 1; slot++)
+        {
+            bool used = false;
+
+            foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
+            {
+                if (conn == null || conn.identity == null) continue;
+
+                TankController tank = conn.identity.GetComponent<TankController>();
+                if (tank != null && tank.playerSlot == slot)
+                {
+                    used = true;
+                    break;
+                }
+            }
+
+            if (!used) return slot;
+        }
+
+        return 1;
+    }
+
+    int CountPlayers()
+    {
+        int count = 0;
+        foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
+        {
+            if (conn != null && conn.identity != null) count++;
+        }
+        return count;
+    }
+
     public override void OnServerAddPlayer(NetworkConnectionToClient conn)
     {
-        Transform spawnPoint = playerCount == 0 ? spawnPointP1 : spawnPointP2;
+        int slot = FindFreeSlot();
+        Transform spawnPoint = slot == 0 ? spawnPointP1 : spawnPointP2;
+
         GameObject player = Instantiate(playerPrefab, spawnPoint.position, spawnPoint.rotation);
+
+        // 关键：槽位必须在 AddPlayerForConnection 之前写入，才会随生成消息下发
+        TankController tank = player.GetComponent<TankController>();
+        if (tank != null)
+        {
+            tank.playerSlot = slot;
+        }
+
         NetworkServer.AddPlayerForConnection(conn, player);
-        playerCount++;
+
+        if (CountPlayers() >= 2 && GameManager.singleton != null)
+        {
+            GameManager.singleton.ServerMarkMatchStarted();
+        }
     }
 
-    // 玩家断开时计数减一
     public override void OnServerDisconnect(NetworkConnectionToClient conn)
     {
         base.OnServerDisconnect(conn);
-        playerCount--;
+
+        if (GameManager.singleton != null)
+        {
+            GameManager.singleton.ServerNotifyOpponentLeft(conn);
+        }
     }
 }

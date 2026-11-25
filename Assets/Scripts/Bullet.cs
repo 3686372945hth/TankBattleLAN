@@ -1,63 +1,73 @@
-using UnityEngine;
 using Mirror;
+using UnityEngine;
 
 public class Bullet : NetworkBehaviour
 {
     public int damage = 1;
 
+    private bool resolved;
+
     void OnTriggerEnter2D(Collider2D other)
     {
-        // 客户端本地预判销毁子弹，消除延迟
         if (!isServer)
         {
-            if (other.CompareTag("Wall") || other.CompareTag("Steel") || other.CompareTag("Tank") || other.CompareTag("Base"))
+            if (IsHittable(other) && !IsOwnTankOnClient(other))
             {
-                Destroy(gameObject);
+                gameObject.SetActive(false);
             }
             return;
         }
 
-        // 服务端权威判定
+        if (resolved) return;
+
         if (other.CompareTag("Wall"))
         {
+            resolved = true;
             NetworkServer.Destroy(other.gameObject);
             NetworkServer.Destroy(gameObject);
         }
         else if (other.CompareTag("Steel"))
         {
+            resolved = true;
             NetworkServer.Destroy(gameObject);
         }
         else if (other.CompareTag("Tank"))
         {
+            if (IsOwnTankOnServer(other)) return;
+
+            resolved = true;
+
             TankHealth health = other.GetComponent<TankHealth>();
-            if (health != null)
+            if (health != null && connectionToClient != null)
             {
-                // 传入击杀者的连接，修正获胜方判定
                 health.TakeDamage(damage, connectionToClient);
             }
             NetworkServer.Destroy(gameObject);
         }
         else if (other.CompareTag("Base"))
         {
-            Base baseObj = other.GetComponent<Base>();
-            if (baseObj != null)
-            {
-                int shooterId = connectionToClient.connectionId;
-                int baseOwnerId = baseObj.ownerConnectionId;
+            resolved = true;
 
-                NetworkConnectionToClient winnerConn;
-                if (shooterId != baseOwnerId)
+            Base baseObj = other.GetComponent<Base>();
+            if (baseObj != null && connectionToClient != null)
+            {
+                int shooterSlot = GetSlotOf(connectionToClient);
+                NetworkConnectionToClient winnerConn = null;
+
+                if (baseObj.ownerSlot != shooterSlot)
                 {
-                    // 击中敌方基地：发射方获胜
+                    // 打中敌方基地：射手获胜
                     winnerConn = connectionToClient;
                 }
                 else
                 {
-                    // 击中己方基地：对方获胜
-                    winnerConn = null;
-                    foreach (var conn in NetworkServer.connections.Values)
+                    // 打中己方基地：对手获胜
+                    foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
                     {
-                        if (conn.connectionId != shooterId)
+                        if (conn == null || conn.identity == null) continue;
+                        if (conn.connectionId == connectionToClient.connectionId) continue;
+
+                        if (GetSlotOf(conn) != shooterSlot)
                         {
                             winnerConn = conn;
                             break;
@@ -65,12 +75,40 @@ public class Bullet : NetworkBehaviour
                     }
                 }
 
-                if (winnerConn != null)
+                if (winnerConn != null && GameManager.singleton != null)
                 {
                     GameManager.singleton.ServerEndGame(winnerConn);
                 }
             }
             NetworkServer.Destroy(gameObject);
         }
+    }
+
+    int GetSlotOf(NetworkConnectionToClient conn)
+    {
+        if (conn == null || conn.identity == null) return -1;
+        TankController tank = conn.identity.GetComponent<TankController>();
+        return tank != null ? tank.playerSlot : -1;
+    }
+
+    bool IsHittable(Collider2D other)
+    {
+        return other.CompareTag("Wall")
+            || other.CompareTag("Steel")
+            || other.CompareTag("Tank")
+            || other.CompareTag("Base");
+    }
+
+    bool IsOwnTankOnServer(Collider2D other)
+    {
+        if (connectionToClient == null) return false;
+        NetworkIdentity id = other.GetComponent<NetworkIdentity>();
+        return id != null && id.connectionToClient == connectionToClient;
+    }
+
+    bool IsOwnTankOnClient(Collider2D other)
+    {
+        NetworkIdentity id = other.GetComponent<NetworkIdentity>();
+        return id != null && NetworkClient.localPlayer != null && id == NetworkClient.localPlayer;
     }
 }
