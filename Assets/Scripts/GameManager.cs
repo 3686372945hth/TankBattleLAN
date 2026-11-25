@@ -1,5 +1,6 @@
 using Mirror;
 using UnityEngine;
+using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.EventSystems;
 using TMPro;
@@ -69,21 +70,14 @@ public class GameManager : MonoBehaviour
 
         if (!isGameOver) return;
 
-        // 心跳：每 0.5 秒证明 Update 还在跑，并输出鼠标状态
         if (verboseLog && Time.unscaledTime >= nextHeartbeat)
         {
             nextHeartbeat = Time.unscaledTime + 0.5f;
             Vector3 mp = Input.mousePosition;
             Debug.Log("[GM] 心跳 鼠标=(" + mp.x + "," + mp.y + ")"
                       + " 按住=" + Input.GetMouseButton(0)
+                      + " 触摸=" + Input.touchCount
                       + " EventSystem=" + (EventSystem.current != null));
-        }
-
-        // 输入探针：任何按键 / 鼠标按下都会留痕
-        if (Input.anyKeyDown)
-        {
-            Debug.Log("[GM] 收到输入 鼠标左键=" + Input.GetMouseButtonDown(0)
-                      + " 空格=" + Input.GetKeyDown(KeyCode.Space));
         }
 
         bool pressed = Input.GetKeyDown(KeyCode.Space) || Input.GetMouseButtonDown(0);
@@ -197,7 +191,32 @@ public class GameManager : MonoBehaviour
         isGameOver = true;
         nextHeartbeat = 0f;
 
-        if (gameOverPanel != null) gameOverPanel.SetActive(true);
+        // 收起移动端操作 UI，避免摇杆和射击按钮盖在结算面板上
+        if (TouchInputManager.singleton != null && TouchInputManager.singleton.gameObject.activeSelf)
+        {
+            TouchInputManager.singleton.gameObject.SetActive(false);
+            if (verboseLog) Debug.Log("[GM] 已收起 TouchInputManager");
+        }
+
+        // 面板置顶，并让面板自己接管点击
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.transform.SetAsLastSibling();
+            gameOverPanel.SetActive(true);
+
+            Graphic panelGraphic = gameOverPanel.GetComponent<Graphic>();
+            if (panelGraphic != null) panelGraphic.raycastTarget = true;
+
+            Button panelButton = gameOverPanel.GetComponent<Button>();
+            if (panelButton == null) panelButton = gameOverPanel.AddComponent<Button>();
+
+            panelButton.transition = Selectable.Transition.None;
+            panelButton.targetGraphic = panelGraphic;
+            panelButton.onClick.RemoveAllListeners();
+            panelButton.onClick.AddListener(ReturnToMenu);
+
+            if (verboseLog) Debug.Log("[GM] 面板点击已挂载");
+        }
 
         if (resultText != null)
         {
@@ -211,35 +230,37 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // 按钮 OnClick 绑定这里，空格 / 点击屏幕也走这里
+    // 面板按钮、空格、点击屏幕、触摸都走这里
     public void ReturnToMenu()
     {
         Debug.Log("[GM] ReturnToMenu 进入 returning=" + returning
                   + " clientActive=" + NetworkClient.active
                   + " serverActive=" + NetworkServer.active
+                  + " activeInHierarchy=" + gameObject.activeInHierarchy
                   + " id=" + GetInstanceID());
 
         if (returning) return;
         returning = true;
 
-        try
-        {
-            StartCoroutine(ReturnRoutine());
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError("[GM] 协程启动失败: " + e);
-            returning = false;
-        }
-    }
-
-    System.Collections.IEnumerator ReturnRoutine()
-    {
         CustomNetworkManager.quitting = true;
 
-        if (resultText != null) resultText.text = "正在返回主菜单";
+        // 关键：物体被禁用时协程根本起不来（Unity 只打错误不抛异常），必须走同步路径
+        if (!isActiveAndEnabled)
+        {
+            Debug.Log("[GM] 组件不可用，走同步返回");
 
-        // 第一步：停网络（包在 try 里，异常只记录不中断）
+            if (resultText != null) resultText.text = "正在返回主菜单";
+
+            StopNetworkSafe();
+            TryLoadSceneSync();
+            return;
+        }
+
+        StartCoroutine(ReturnRoutine());
+    }
+
+    void StopNetworkSafe()
+    {
         try
         {
             NetworkManager nm = NetworkManager.singleton;
@@ -248,26 +269,23 @@ public class GameManager : MonoBehaviour
 
             if (nm != null)
             {
-                if (NetworkClient.active && NetworkServer.active)
-                {
-                    nm.StopHost();
-                }
-                else if (NetworkClient.active)
-                {
-                    nm.StopClient();
-                }
-                else if (NetworkServer.active)
-                {
-                    nm.StopServer();
-                }
+                if (NetworkClient.active && NetworkServer.active) nm.StopHost();
+                else if (NetworkClient.active) nm.StopClient();
+                else if (NetworkServer.active) nm.StopServer();
             }
         }
         catch (System.Exception e)
         {
             Debug.LogError("[GM] 停止网络异常: " + e);
         }
+    }
 
-        // 第二步：等网络真正停干净（最多 2 秒）
+    System.Collections.IEnumerator ReturnRoutine()
+    {
+        if (resultText != null) resultText.text = "正在返回主菜单";
+
+        StopNetworkSafe();
+
         float deadline = Time.realtimeSinceStartup + 2f;
         while ((NetworkClient.active || NetworkServer.active) && Time.realtimeSinceStartup < deadline)
         {
@@ -277,7 +295,11 @@ public class GameManager : MonoBehaviour
         Debug.Log("[GM] 停止网络 后 clientActive=" + NetworkClient.active
                   + " serverActive=" + NetworkServer.active);
 
-        // 第三步：重载场景
+        TryLoadSceneSync();
+    }
+
+    void TryLoadSceneSync()
+    {
         try
         {
             string sceneName = SceneManager.GetActiveScene().name;
@@ -285,14 +307,8 @@ public class GameManager : MonoBehaviour
 
             Debug.Log("[GM] 重载场景 name=" + sceneName + " index=" + sceneIndex);
 
-            if (sceneIndex >= 0)
-            {
-                SceneManager.LoadScene(sceneIndex);
-            }
-            else
-            {
-                SceneManager.LoadScene(sceneName);
-            }
+            if (sceneIndex >= 0) SceneManager.LoadScene(sceneIndex);
+            else SceneManager.LoadScene(sceneName);
 
             Debug.Log("[GM] LoadScene 调用完成");
         }
