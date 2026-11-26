@@ -8,16 +8,24 @@ public class TankController : NetworkBehaviour
     public const int ResultLose = -1;
     public const int ResultOpponentLeft = 2;
 
-    // 0 = 玩家1（左），1 = 玩家2（右）。由服务端在生成前写入，随生成消息下发
+    // 0 = 未分配，1/2 = 双方槽位；由服务端写入，客机只读
     [SyncVar]
     public int playerSlot = -1;
+
+    // 随机钢墙种子，两端用同一 seed 算出同一批位置
+    [SyncVar]
+    public int mapSeed = 0;
+
+    // 倒计时阶段：0 未开始，1/2/3 倒数，4 开战
+    [SyncVar(hook = nameof(OnCountdownStageChanged))]
+    public int countdownStage = 0;
 
     [Header("移动参数")]
     public float moveSpeed = 5f;
     public float keyboardRotateSpeed = 180f;
     public float joystickRotateSpeed = 480f;
 
-    [Header("射击参数")]
+    [Header("开火参数")]
     public GameObject bulletPrefab;
     public Transform firePoint;
     public float fireCooldown = 0.5f;
@@ -36,6 +44,9 @@ public class TankController : NetworkBehaviour
     private float moveInput;
     private float rotateInput;
 
+    // 是否处于倒计时阶段
+    public bool IsCountingDown => countdownStage >= 1 && countdownStage < 4;
+
     void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
@@ -47,16 +58,29 @@ public class TankController : NetworkBehaviour
         base.OnStartServer();
 
         tankColor = playerSlot == 0
-            ? new Color(0.2f, 0.4f, 1f)    // 玩家1：蓝色
-            : new Color(1f, 0.4f, 0.4f);   // 玩家2：浅红色
+            ? new Color(0.2f, 0.4f, 1f)
+            : new Color(1f, 0.4f, 0.4f);
     }
 
     public override void OnStartLocalPlayer()
     {
         base.OnStartLocalPlayer();
+
         if (TouchInputManager.singleton != null)
         {
             TouchInputManager.singleton.BindLocalTank(this);
+        }
+
+        // 客机拿到种子后生成同一批随机钢墙
+        if (SteelWallSpawner.singleton != null)
+        {
+            SteelWallSpawner.singleton.SpawnRandomWalls(mapSeed);
+        }
+
+        // 同步当前倒计时阶段，hook 只在变化时触发
+        if (GameManager.singleton != null)
+        {
+            GameManager.singleton.SetCountdownStage(countdownStage);
         }
     }
 
@@ -66,22 +90,50 @@ public class TankController : NetworkBehaviour
         matchResult = result;
     }
 
+    public void SetDeadVisual()
+    {
+        if (tankSprite != null)
+        {
+            tankSprite.color = new Color(0.35f, 0.35f, 0.35f, 1f);
+        }
+    }
+
     void OnMatchResultChanged(int oldValue, int newValue)
     {
         if (newValue == ResultNone) return;
-
-        // 主机同时拥有两台坦克，只有自己那台才该刷本机面板
         if (!isLocalPlayer) return;
+
+        string resultStr;
+        if (newValue == ResultOpponentLeft)
+        {
+            resultStr = "对手已退出";
+        }
+        else if (newValue == ResultWin)
+        {
+            resultStr = "对手被击毁了";
+        }
+        else
+        {
+            resultStr = "你被击毁了";
+        }
 
         if (GameManager.singleton != null)
         {
-            string resultStr = newValue == ResultOpponentLeft ? "对手已断开" : "对局结束";
             GameManager.singleton.ShowGameOverUI(resultStr, newValue);
+        }
+    }
+
+    void OnCountdownStageChanged(int oldStage, int newStage)
+    {
+        if (GameManager.singleton != null)
+        {
+            GameManager.singleton.SetCountdownStage(newStage);
         }
     }
 
     bool IsFrozen()
     {
+        if (IsCountingDown) return true;
         return GameManager.singleton != null && GameManager.singleton.isGameOver;
     }
 
@@ -161,6 +213,7 @@ public class TankController : NetworkBehaviour
 
     public void TryFire()
     {
+        if (IsFrozen()) return;
         if (Time.time - lastFireTime < fireCooldown) return;
         lastFireTime = Time.time;
         CmdFire();
@@ -178,7 +231,26 @@ public class TankController : NetworkBehaviour
             bulletRb.velocity = firePoint.up * 12f;
         }
 
+        // 主机/服务端本地直接播开火音，Rpc 只下发远程客机
+        LocalPlayShot();
+        RpcPlayShot();
+
         Destroy(bullet, 2f);
+    }
+
+    void LocalPlayShot()
+    {
+        if (SfxManager.singleton != null)
+        {
+            SfxManager.singleton.PlayShot(transform.position);
+        }
+    }
+
+    [ClientRpc]
+    void RpcPlayShot()
+    {
+        if (isServer) return; // 主机/服务端已本地播过，避免重复
+        LocalPlayShot();
     }
 
     void OnColorChanged(Color oldColor, Color newColor)

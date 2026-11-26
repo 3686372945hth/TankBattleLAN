@@ -7,13 +7,10 @@ public class CustomNetworkManager : NetworkManager
 
     public static bool quitting = false;
 
-    [Header("出生点")]
-    public Transform spawnPointP1;
-    public Transform spawnPointP2;
-
     [Header("基地配置")]
     public GameObject basePrefab;
-    public float basePosX = 6.5f;
+
+    private int mapSeed = 0;
 
     public override void Awake()
     {
@@ -29,6 +26,16 @@ public class CustomNetworkManager : NetworkManager
     {
         base.OnStartServer();
         quitting = false;
+
+        // 每局换一个种子，两端据此算出同一张地图
+        mapSeed = Random.Range(1000, int.MaxValue);
+        if (mapSeed <= 0) mapSeed = 12345;
+
+        // 顺序很重要：先放随机钢墙，砖墙才能避让
+        if (SteelWallSpawner.singleton != null)
+        {
+            SteelWallSpawner.singleton.SpawnRandomWalls(mapSeed);
+        }
 
         BrickSpawner.singleton.ServerSpawnBricks();
         SpawnBases();
@@ -69,16 +76,15 @@ public class CustomNetworkManager : NetworkManager
 
     void SpawnBases()
     {
-        GameObject leftBase = Instantiate(basePrefab, new Vector3(-basePosX, 0, 0), Quaternion.identity);
+        GameObject leftBase = Instantiate(basePrefab, new Vector3(-MapConfig.BaseX, 0f, 0f), Quaternion.identity);
         leftBase.GetComponent<Base>().ownerSlot = 0;
         NetworkServer.Spawn(leftBase);
 
-        GameObject rightBase = Instantiate(basePrefab, new Vector3(basePosX, 0, 0), Quaternion.identity);
+        GameObject rightBase = Instantiate(basePrefab, new Vector3(MapConfig.BaseX, 0f, 0f), Quaternion.identity);
         rightBase.GetComponent<Base>().ownerSlot = 1;
         NetworkServer.Spawn(rightBase);
     }
 
-    // 找一个没被占用的槽位（0 或 1），都占了就返回 1
     int FindFreeSlot()
     {
         for (int slot = 0; slot <= 1; slot++)
@@ -116,15 +122,18 @@ public class CustomNetworkManager : NetworkManager
     public override void OnServerAddPlayer(NetworkConnectionToClient conn)
     {
         int slot = FindFreeSlot();
-        Transform spawnPoint = slot == 0 ? spawnPointP1 : spawnPointP2;
 
-        GameObject player = Instantiate(playerPrefab, spawnPoint.position, spawnPoint.rotation);
+        Vector3 spawnPos = slot == 0
+            ? new Vector3(-MapConfig.SpawnX, 0f, 0f)
+            : new Vector3(MapConfig.SpawnX, 0f, 0f);
 
-        // 关键：槽位必须在 AddPlayerForConnection 之前写入，才会随生成消息下发
+        GameObject player = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
+
         TankController tank = player.GetComponent<TankController>();
         if (tank != null)
         {
             tank.playerSlot = slot;
+            tank.mapSeed = mapSeed;
         }
 
         NetworkServer.AddPlayerForConnection(conn, player);

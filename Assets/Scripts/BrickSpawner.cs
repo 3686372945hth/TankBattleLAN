@@ -9,25 +9,11 @@ public class BrickSpawner : MonoBehaviour
     [Header("砖墙预制体")]
     public GameObject brickPrefab;
 
-    [Header("场地大小")]
-    public float areaWidth = 14f;
-    public float areaHeight = 9f;
-
-    [Header("砖墙数量")]
-    public int brickCount = 40;
-
-    [Header("左右留白")]
-    public float sideAvoidWidth = 2.5f;
-
-    [Header("避让距离")]
-    [Tooltip("出生点周围不放砖墙的半径")]
-    public float spawnSafeRadius = 1.6f;
-
-    [Tooltip("基地周围不放砖墙的半径")]
-    public float baseSafeRadius = 1.8f;
-
-    [Tooltip("砖墙中心之间的最小距离")]
-    public float brickSpacing = 1.15f;
+    private const int BrickCount = 180;
+    private const float SpawnSafeRadius = 1.8f;
+    private const float BaseSafeRadius = 2.0f;
+    private const float BrickSpacing = 1.15f;
+    private const float SteelClearance = 1.3f;
 
     void Awake()
     {
@@ -37,7 +23,6 @@ public class BrickSpawner : MonoBehaviour
     [Server]
     public void ServerSpawnBricks()
     {
-        // 先清掉旧的砖墙
         GameObject[] oldBricks = GameObject.FindGameObjectsWithTag("Wall");
         foreach (var brick in oldBricks)
         {
@@ -47,14 +32,14 @@ public class BrickSpawner : MonoBehaviour
             }
         }
 
-        float minX = -areaWidth / 2 + sideAvoidWidth;
-        float maxX = areaWidth / 2 - sideAvoidWidth;
-        float minY = -areaHeight / 2;
-        float maxY = areaHeight / 2;
+        float minX = -MapConfig.HalfWidth + MapConfig.BrickPadding;
+        float maxX = MapConfig.HalfWidth - MapConfig.BrickPadding;
+        float minY = -MapConfig.HalfHeight + MapConfig.BrickPadding;
+        float maxY = MapConfig.HalfHeight - MapConfig.BrickPadding;
 
         List<Vector2> placed = new List<Vector2>();
 
-        for (int i = 0; i < brickCount; i++)
+        for (int i = 0; i < BrickCount; i++)
         {
             Vector2 pos = Vector2.zero;
             bool found = false;
@@ -68,7 +53,7 @@ public class BrickSpawner : MonoBehaviour
                 bool tooClose = false;
                 foreach (Vector2 p in placed)
                 {
-                    if (Vector2.Distance(candidate, p) < brickSpacing)
+                    if (Vector2.Distance(candidate, p) < BrickSpacing)
                     {
                         tooClose = true;
                         break;
@@ -81,7 +66,7 @@ public class BrickSpawner : MonoBehaviour
                 break;
             }
 
-            if (!found) continue;   // 实在放不下就少放一块，不影响对局
+            if (!found) continue;
 
             placed.Add(pos);
 
@@ -91,16 +76,16 @@ public class BrickSpawner : MonoBehaviour
         }
     }
 
-    // 出生点 / 基地附近的区域不许放砖
     bool IsBlocked(Vector2 p)
     {
-        CustomNetworkManager nm = CustomNetworkManager.singleton;
-        if (nm == null) return false;
+        if (Vector2.Distance(p, MapConfig.SpawnP1) < SpawnSafeRadius) return true;
+        if (Vector2.Distance(p, MapConfig.SpawnP2) < SpawnSafeRadius) return true;
+        if (Vector2.Distance(p, MapConfig.BaseLeft) < BaseSafeRadius) return true;
+        if (Vector2.Distance(p, MapConfig.BaseRight) < BaseSafeRadius) return true;
 
-        if (nm.spawnPointP1 != null && Vector2.Distance(p, nm.spawnPointP1.position) < spawnSafeRadius) return true;
-        if (nm.spawnPointP2 != null && Vector2.Distance(p, nm.spawnPointP2.position) < spawnSafeRadius) return true;
-        if (Vector2.Distance(p, new Vector2(-nm.basePosX, 0)) < baseSafeRadius) return true;
-        if (Vector2.Distance(p, new Vector2(nm.basePosX, 0)) < baseSafeRadius) return true;
+        // 避开内部随机钢墙，防止砖墙和钢墙叠在一起
+        if (SteelWallSpawner.singleton != null &&
+            SteelWallSpawner.singleton.IsNearRandomWall(p, SteelClearance)) return true;
 
         return false;
     }

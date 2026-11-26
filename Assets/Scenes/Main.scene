@@ -671,6 +671,7 @@ GameObject:
   - component: {fileID: 519420032}
   - component: {fileID: 519420031}
   - component: {fileID: 519420029}
+  - component: {fileID: 519420033}
   m_Layer: 0
   m_HasEditorInfo: 1
   m_Name: Main Camera
@@ -755,38 +756,21 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &520966578
-GameObject:
+--- !u!114 &519420033
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  serializedVersion: 7
-  m_Component:
-  - component: {fileID: 520966579}
-  m_Layer: 0
-  m_HasEditorInfo: 1
-  m_Name: SpawnPoint_P2
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &520966579
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 520966578}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 4.5, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_GameObject: {fileID: 519420028}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 02454596ce4e2bd42a53af7ece67f611, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  followSpeed: 8
+  minViewHeight: 13
+  minViewWidth: 20
 --- !u!1 &655807763
 GameObject:
   m_ObjectHideFlags: 0
@@ -1385,8 +1369,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   gameOverPanel: {fileID: 817959769}
   resultText: {fileID: 1820062168}
-  showDebugHp: 1
-  verboseLog: 1
+  showDebugHp: 0
+  verboseLog: 0
 --- !u!1 &1063738869
 GameObject:
   m_ObjectHideFlags: 0
@@ -1907,38 +1891,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1381539920}
   m_CullTransparentMesh: 1
---- !u!1 &1388376249
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 7
-  m_Component:
-  - component: {fileID: 1388376250}
-  m_Layer: 0
-  m_HasEditorInfo: 1
-  m_Name: SpawnPoint_P1
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &1388376250
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1388376249}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -4.5, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1553515205
 GameObject:
   m_ObjectHideFlags: 0
@@ -2293,10 +2245,7 @@ MonoBehaviour:
   evaluationMethod: 0
   evaluationInterval: 3
   timeInterpolationGui: 0
-  spawnPointP1: {fileID: 1388376250}
-  spawnPointP2: {fileID: 520966579}
   basePrefab: {fileID: 7482751037756499776, guid: 9e6265b8875c3fc4db6aee92dc64023c, type: 3}
-  basePosX: 6.5
 --- !u!114 &1633438653
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2979,9 +2928,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   steelWallPrefab: {fileID: 116801568851836875, guid: d91e9ffc3422d334ab0aba2974bff98a, type: 3}
-  mapWidth: 14
-  mapHeight: 10
   wallUnitSize: 1
+  randomWallCount: 40
+  randomWallSpacing: 2.2
+  keyPointClearance: 3
+  edgeMargin: 1.5
 --- !u!1 &2022430518
 GameObject:
   m_ObjectHideFlags: 0
@@ -3162,13 +3113,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   brickPrefab: {fileID: 4628004729085477795, guid: 8135f7e568c539044bbae91102b8ce9b, type: 3}
-  areaWidth: 14
-  areaHeight: 10
-  brickCount: 40
-  sideAvoidWidth: 2.5
-  spawnSafeRadius: 1.6
-  baseSafeRadius: 1.8
-  brickSpacing: 1.15
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -3177,8 +3121,6 @@ SceneRoots:
   - {fileID: 1983866015}
   - {fileID: 2097809545}
   - {fileID: 1633438651}
-  - {fileID: 1388376250}
-  - {fileID: 520966579}
   - {fileID: 1855025616}
   - {fileID: 1018988895}
   - {fileID: 824138197}

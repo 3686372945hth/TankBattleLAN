@@ -6,10 +6,12 @@ public class TankHealth : NetworkBehaviour
     [SyncVar] public int maxHealth = 3;
     [SyncVar] public int currentHealth = 3;
 
+    [SyncVar(hook = nameof(OnDeadChanged))]
+    public bool isDead;
+
     // 只初始化一次，避免对象重发（所有权变化）时把血回满
     private bool healthInitialized;
 
-    // 生成时在服务端初始化：OnStartServer 一定早于生成消息发出
     public override void OnStartServer()
     {
         base.OnStartServer();
@@ -31,13 +33,23 @@ public class TankHealth : NetworkBehaviour
         if (currentHealth <= 0)
         {
             currentHealth = 0;
+            isDead = true;
 
             if (GameManager.singleton != null)
             {
                 GameManager.singleton.ServerEndGame(attackerConn);
             }
-
-            // 不销毁坦克：对象留着，结算状态才发得出去
         }
+    }
+
+    void OnDeadChanged(bool oldValue, bool newValue)
+    {
+        if (!newValue) return;
+
+        TankController tc = GetComponent<TankController>();
+        if (tc != null) tc.SetDeadVisual();
+
+        if (FxManager.singleton != null) FxManager.singleton.SpawnHit(transform.position, HitKind.Tank);
+        if (SfxManager.singleton != null) SfxManager.singleton.PlayExplosion();
     }
 }

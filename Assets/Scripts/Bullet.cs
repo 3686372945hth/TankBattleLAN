@@ -9,6 +9,7 @@ public class Bullet : NetworkBehaviour
 
     void OnTriggerEnter2D(Collider2D other)
     {
+        // 客机只负责隐藏自己的子弹，命中判定与特效/音效统一走服务端 + Rpc 路径
         if (!isServer)
         {
             if (IsHittable(other) && !IsOwnTankOnClient(other))
@@ -23,12 +24,16 @@ public class Bullet : NetworkBehaviour
         if (other.CompareTag("Wall"))
         {
             resolved = true;
+            LocalHitFx(transform.position, HitKind.Wall);
+            RpcHitFx(transform.position, (int)HitKind.Wall);
             NetworkServer.Destroy(other.gameObject);
             NetworkServer.Destroy(gameObject);
         }
         else if (other.CompareTag("Steel"))
         {
             resolved = true;
+            LocalHitFx(transform.position, HitKind.Steel);
+            RpcHitFx(transform.position, (int)HitKind.Steel);
             NetworkServer.Destroy(gameObject);
         }
         else if (other.CompareTag("Tank"))
@@ -42,6 +47,9 @@ public class Bullet : NetworkBehaviour
             {
                 health.TakeDamage(damage, connectionToClient);
             }
+
+            LocalHitFx(transform.position, HitKind.Tank);
+            RpcHitFx(transform.position, (int)HitKind.Tank);
             NetworkServer.Destroy(gameObject);
         }
         else if (other.CompareTag("Base"))
@@ -56,12 +64,10 @@ public class Bullet : NetworkBehaviour
 
                 if (baseObj.ownerSlot != shooterSlot)
                 {
-                    // 打中敌方基地：射手获胜
                     winnerConn = connectionToClient;
                 }
                 else
                 {
-                    // 打中己方基地：对手获胜
                     foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
                     {
                         if (conn == null || conn.identity == null) continue;
@@ -80,8 +86,28 @@ public class Bullet : NetworkBehaviour
                     GameManager.singleton.ServerEndGame(winnerConn);
                 }
             }
+
+            LocalHitFx(transform.position, HitKind.Base);
+            RpcHitFx(transform.position, (int)HitKind.Base);
             NetworkServer.Destroy(gameObject);
         }
+    }
+
+    // 服务端 / 主机本地直接播放一次。
+    // Host 本地收不到挂在临时子弹上的 ClientRpc，所以在命中分支本地直播。
+    void LocalHitFx(Vector3 pos, HitKind kind)
+    {
+        if (FxManager.singleton != null) FxManager.singleton.SpawnHit(pos, kind);
+        if (SfxManager.singleton != null) SfxManager.singleton.PlayHit(kind, pos);
+    }
+
+    [ClientRpc]
+    void RpcHitFx(Vector3 pos, int kind)
+    {
+        // 主机/服务端已在本地播过，这里跳过避免重复
+        if (isServer) return;
+
+        LocalHitFx(pos, (HitKind)kind);
     }
 
     int GetSlotOf(NetworkConnectionToClient conn)

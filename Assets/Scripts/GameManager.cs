@@ -1,3 +1,4 @@
+using System.Collections;
 using Mirror;
 using UnityEngine;
 using UnityEngine.UI;
@@ -14,11 +15,11 @@ public class GameManager : MonoBehaviour
     public TMP_Text resultText;
 
     [Header("调试")]
-    [Tooltip("屏幕左上角显示每台坦克血量，联调完记得关掉")]
-    public bool showDebugHp = true;
+    [Tooltip("在屏幕左上角显示每台坦克的血量（仅联调时打开）")]
+    public bool showDebugHp = false;
 
-    [Tooltip("把结算、点击、返回流程的每一步都打进日志")]
-    public bool verboseLog = true;
+    [Tooltip("联网事件、返回菜单等逐帧打印调试日志（仅联调时打开）")]
+    public bool verboseLog = false;
 
     [System.NonSerialized] public bool isGameOver;
 
@@ -27,8 +28,17 @@ public class GameManager : MonoBehaviour
     private bool matchStarted;
     private float nextHeartbeat;
 
+    // 开局倒计时文字与协程
+    private TextMeshProUGUI countdownText;
+    private Coroutine countdownRoutine;
+    private Coroutine hideCountdownRoutine;
+
     void Awake()
     {
+        // 定稿强制关闭调试面板与刷屏日志，覆盖场景里残留的勾选值
+        showDebugHp = false;
+        verboseLog = false;
+
         singleton = this;
 
         if (verboseLog)
@@ -49,6 +59,10 @@ public class GameManager : MonoBehaviour
         if (gameOverPanel != null) gameOverPanel.SetActive(false);
         if (resultText != null) resultText.gameObject.SetActive(false);
 
+        SfxManager.EnsureExists();
+        FxManager.EnsureExists();
+        CreateCountdownText();
+
         if (verboseLog)
         {
             Debug.Log("[GM] Start panel=" + (gameOverPanel != null)
@@ -59,12 +73,42 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    void CreateCountdownText()
+    {
+        Canvas canvas = FindObjectOfType<Canvas>();
+        if (canvas == null) return;
+
+        GameObject go = new GameObject("CountdownText", typeof(RectTransform));
+        go.transform.SetParent(canvas.transform, false);
+
+        countdownText = go.AddComponent<TextMeshProUGUI>();
+        RectTransform rt = countdownText.rectTransform;
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(900f, 220f);
+
+        countdownText.alignment = TextAlignmentOptions.Center;
+        countdownText.fontSize = 130f;
+        countdownText.fontWeight = FontWeight.Bold;
+        countdownText.color = Color.white;
+
+        if (resultText != null && resultText.font != null)
+        {
+            countdownText.font = resultText.font;
+        }
+
+        countdownText.text = "";
+        countdownText.gameObject.SetActive(false);
+    }
+
     void Update()
     {
 #if UNITY_EDITOR
         if (!isGameOver && Input.GetKeyDown(KeyCode.F1))
         {
-            ShowGameOverUI("测试结算", TankController.ResultWin);
+            ShowGameOverUI("测试胜利", TankController.ResultWin);
         }
 #endif
 
@@ -74,9 +118,9 @@ public class GameManager : MonoBehaviour
         {
             nextHeartbeat = Time.unscaledTime + 0.5f;
             Vector3 mp = Input.mousePosition;
-            Debug.Log("[GM] 心跳 鼠标=(" + mp.x + "," + mp.y + ")"
-                      + " 按住=" + Input.GetMouseButton(0)
-                      + " 触摸=" + Input.touchCount
+            Debug.Log("[GM] 结算 鼠标=(" + mp.x + "," + mp.y + ")"
+                      + " 按压=" + Input.GetMouseButton(0)
+                      + " 触控=" + Input.touchCount
                       + " EventSystem=" + (EventSystem.current != null));
         }
 
@@ -92,14 +136,14 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // 临时调试：屏幕左上角显示每台坦克的血量
+    // 调试用：屏幕左上角显示每台坦克的血量
     void OnGUI()
     {
         if (!showDebugHp) return;
 
         TankController[] tanks = FindObjectsOfType<TankController>();
         GUILayout.BeginArea(new Rect(10, 10, 320, 40 + tanks.Length * 26));
-        GUILayout.Label("HP 监控");
+        GUILayout.Label("HP 调试");
 
         foreach (TankController t in tanks)
         {
@@ -107,7 +151,7 @@ public class GameManager : MonoBehaviour
             if (h != null)
             {
                 GUILayout.Label("netId " + t.netId + " : " + h.currentHealth + "/" + h.maxHealth
-                                + (t.isLocalPlayer ? "  (本机)" : ""));
+                                + (t.isLocalPlayer ? "  (本地)" : ""));
             }
         }
 
@@ -119,7 +163,81 @@ public class GameManager : MonoBehaviour
         if (!NetworkServer.active) return;
         matchStarted = true;
 
-        if (verboseLog) Debug.Log("[GM] 对局已开始");
+        if (verboseLog) Debug.Log("[GM] 对局开始，启动开局倒计时");
+
+        if (countdownRoutine != null) StopCoroutine(countdownRoutine);
+        countdownRoutine = StartCoroutine(ServerCountdownRoutine());
+    }
+
+    IEnumerator ServerCountdownRoutine()
+    {
+        SetAllTanksStage(1);
+        yield return new WaitForSeconds(1f);
+
+        SetAllTanksStage(2);
+        yield return new WaitForSeconds(1f);
+
+        SetAllTanksStage(3);
+        yield return new WaitForSeconds(1f);
+
+        SetAllTanksStage(4);
+    }
+
+    void SetAllTanksStage(int stage)
+    {
+        foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
+        {
+            if (conn == null || conn.identity == null) continue;
+
+            TankController tank = conn.identity.GetComponent<TankController>();
+            if (tank != null) tank.countdownStage = stage;
+        }
+    }
+
+    // 由坦克 SyncVar hook 回调，在两端本地刷新倒计时显示
+    public void SetCountdownStage(int stage)
+    {
+        if (countdownText == null) return;
+
+        if (stage == 1)
+        {
+            ShowCountdown("3");
+            if (SfxManager.singleton != null) SfxManager.singleton.PlayBeep();
+        }
+        else if (stage == 2)
+        {
+            ShowCountdown("2");
+            if (SfxManager.singleton != null) SfxManager.singleton.PlayBeep();
+        }
+        else if (stage == 3)
+        {
+            ShowCountdown("1");
+            if (SfxManager.singleton != null) SfxManager.singleton.PlayBeep();
+        }
+        else if (stage == 4)
+        {
+            ShowCountdown("开战");
+            if (SfxManager.singleton != null) SfxManager.singleton.PlayGo();
+
+            if (hideCountdownRoutine != null) StopCoroutine(hideCountdownRoutine);
+            hideCountdownRoutine = StartCoroutine(HideCountdownRoutine(0.8f));
+        }
+        else
+        {
+            countdownText.gameObject.SetActive(false);
+        }
+    }
+
+    void ShowCountdown(string text)
+    {
+        countdownText.text = text;
+        countdownText.gameObject.SetActive(true);
+    }
+
+    IEnumerator HideCountdownRoutine(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (countdownText != null) countdownText.gameObject.SetActive(false);
     }
 
     public void ServerEndGame(NetworkConnectionToClient winnerConn)
@@ -180,7 +298,7 @@ public class GameManager : MonoBehaviour
     {
         if (verboseLog)
         {
-            Debug.Log("[GM] ShowGameOverUI 进入 id=" + GetInstanceID()
+            Debug.Log("[GM] ShowGameOverUI 面板 id=" + GetInstanceID()
                       + " state=" + state
                       + " active=" + gameObject.activeInHierarchy
                       + " componentEnabled=" + enabled
@@ -191,14 +309,14 @@ public class GameManager : MonoBehaviour
         isGameOver = true;
         nextHeartbeat = 0f;
 
-        // 收起移动端操作 UI，避免摇杆和射击按钮盖在结算面板上
+        // 收起触屏输入，避免摇杆和返回菜单按钮同时抢点击
         if (TouchInputManager.singleton != null && TouchInputManager.singleton.gameObject.activeSelf)
         {
             TouchInputManager.singleton.gameObject.SetActive(false);
             if (verboseLog) Debug.Log("[GM] 已收起 TouchInputManager");
         }
 
-        // 面板置顶，并让面板自己接管点击
+        // 面板置顶并自己接管点击，确保任意点击都能返回菜单
         if (gameOverPanel != null)
         {
             gameOverPanel.transform.SetAsLastSibling();
@@ -215,7 +333,7 @@ public class GameManager : MonoBehaviour
             panelButton.onClick.RemoveAllListeners();
             panelButton.onClick.AddListener(ReturnToMenu);
 
-            if (verboseLog) Debug.Log("[GM] 面板点击已挂载");
+            if (verboseLog) Debug.Log("[GM] 已挂载返回按钮");
         }
 
         if (resultText != null)
@@ -223,33 +341,27 @@ public class GameManager : MonoBehaviour
             resultText.gameObject.SetActive(true);
 
             string head = "";
-            if (state == TankController.ResultWin) head = "胜利！";
+            if (state == TankController.ResultWin) head = "胜利";
             else if (state == TankController.ResultLose) head = "失败";
 
-            resultText.text = head.Length > 0 ? head + "\n" + resultStr : resultStr;
+            resultText.text = head.Length > 0 ? head + "\n" + resultStr : resultText.text;
         }
     }
 
-    // 面板按钮、空格、点击屏幕、触摸都走这里
+    // 点按钮 / 点屏幕返回菜单：先停网络，等状态归零再重载场景
     public void ReturnToMenu()
     {
-        Debug.Log("[GM] ReturnToMenu 进入 returning=" + returning
-                  + " clientActive=" + NetworkClient.active
-                  + " serverActive=" + NetworkServer.active
-                  + " activeInHierarchy=" + gameObject.activeInHierarchy
-                  + " id=" + GetInstanceID());
-
         if (returning) return;
         returning = true;
 
         CustomNetworkManager.quitting = true;
 
-        // 关键：物体被禁用时协程根本起不来（Unity 只打错误不抛异常），必须走同步路径
+        // 关键：若组件已被禁用（断线时 Mirror 会清理物体），协程无法启动，直接走同步路径
         if (!isActiveAndEnabled)
         {
-            Debug.Log("[GM] 组件不可用，走同步返回");
+            if (verboseLog) Debug.Log("[GM] 组件未激活，走同步返回");
 
-            if (resultText != null) resultText.text = "正在返回主菜单";
+            if (resultText != null) resultText.text = "正在返回菜单";
 
             StopNetworkSafe();
             TryLoadSceneSync();
@@ -264,8 +376,11 @@ public class GameManager : MonoBehaviour
         try
         {
             NetworkManager nm = NetworkManager.singleton;
-            Debug.Log("[GM] 停止网络 前 clientActive=" + NetworkClient.active
-                      + " serverActive=" + NetworkServer.active);
+            if (verboseLog)
+            {
+                Debug.Log("[GM] 停止网络 前 clientActive=" + NetworkClient.active
+                          + " serverActive=" + NetworkServer.active);
+            }
 
             if (nm != null)
             {
@@ -282,7 +397,7 @@ public class GameManager : MonoBehaviour
 
     System.Collections.IEnumerator ReturnRoutine()
     {
-        if (resultText != null) resultText.text = "正在返回主菜单";
+        if (resultText != null) resultText.text = "正在返回菜单";
 
         StopNetworkSafe();
 
@@ -292,8 +407,11 @@ public class GameManager : MonoBehaviour
             yield return null;
         }
 
-        Debug.Log("[GM] 停止网络 后 clientActive=" + NetworkClient.active
-                  + " serverActive=" + NetworkServer.active);
+        if (verboseLog)
+        {
+            Debug.Log("[GM] 停止网络 后 clientActive=" + NetworkClient.active
+                      + " serverActive=" + NetworkServer.active);
+        }
 
         TryLoadSceneSync();
     }
@@ -305,17 +423,20 @@ public class GameManager : MonoBehaviour
             string sceneName = SceneManager.GetActiveScene().name;
             int sceneIndex = SceneManager.GetActiveScene().buildIndex;
 
-            Debug.Log("[GM] 重载场景 name=" + sceneName + " index=" + sceneIndex);
+            if (verboseLog)
+            {
+                Debug.Log("[GM] 场景返回 name=" + sceneName + " index=" + sceneIndex);
+            }
 
             if (sceneIndex >= 0) SceneManager.LoadScene(sceneIndex);
             else SceneManager.LoadScene(sceneName);
 
-            Debug.Log("[GM] LoadScene 调用完成");
+            if (verboseLog) Debug.Log("[GM] LoadScene 已触发");
         }
         catch (System.Exception e)
         {
-            Debug.LogError("[GM] 重载场景异常: " + e);
-            if (resultText != null) resultText.text = "重载异常: " + e.Message;
+            Debug.LogError("[GM] 场景返回异常: " + e);
+            if (resultText != null) resultText.text = "返回菜单出错: " + e.Message;
             returning = false;
         }
     }
