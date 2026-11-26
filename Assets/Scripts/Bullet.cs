@@ -5,11 +5,24 @@ public class Bullet : NetworkBehaviour
 {
     public int damage = 1;
 
+    private const float LifeTime = 2f;
+
     private bool resolved;
+    private float lifeTimer;
+
+    void Update()
+    {
+        if (!isServer) return;
+
+        lifeTimer += Time.deltaTime;
+        if (lifeTimer >= LifeTime)
+        {
+            NetworkServer.Destroy(gameObject);
+        }
+    }
 
     void OnTriggerEnter2D(Collider2D other)
     {
-        // 客机只负责隐藏自己的子弹，命中判定与特效/音效统一走服务端 + Rpc 路径
         if (!isServer)
         {
             if (IsHittable(other) && !IsOwnTankOnClient(other))
@@ -59,6 +72,8 @@ public class Bullet : NetworkBehaviour
             Base baseObj = other.GetComponent<Base>();
             if (baseObj != null && connectionToClient != null)
             {
+                baseObj.MarkDestroyed();
+
                 int shooterSlot = GetSlotOf(connectionToClient);
                 NetworkConnectionToClient winnerConn = null;
 
@@ -93,8 +108,6 @@ public class Bullet : NetworkBehaviour
         }
     }
 
-    // 服务端 / 主机本地直接播放一次。
-    // Host 本地收不到挂在临时子弹上的 ClientRpc，所以在命中分支本地直播。
     void LocalHitFx(Vector3 pos, HitKind kind)
     {
         if (FxManager.singleton != null) FxManager.singleton.SpawnHit(pos, kind);
@@ -104,9 +117,7 @@ public class Bullet : NetworkBehaviour
     [ClientRpc]
     void RpcHitFx(Vector3 pos, int kind)
     {
-        // 主机/服务端已在本地播过，这里跳过避免重复
         if (isServer) return;
-
         LocalHitFx(pos, (HitKind)kind);
     }
 

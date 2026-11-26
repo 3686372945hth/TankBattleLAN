@@ -26,7 +26,8 @@ public class TankHealth : NetworkBehaviour
     [Server]
     public void TakeDamage(int damage, NetworkConnectionToClient attackerConn)
     {
-        // 已经结算过就不再处理
+        // 已阵亡不再受击，血量不扣成负数
+        if (isDead) return;
         if (GameManager.singleton != null && GameManager.singleton.isGameOver) return;
 
         currentHealth -= damage;
@@ -48,6 +49,13 @@ public class TankHealth : NetworkBehaviour
 
         TankController tc = GetComponent<TankController>();
         if (tc != null) tc.SetDeadVisual();
+
+        // 尸体不再参与碰撞，避免子弹继续打尸体
+        Collider2D[] cols = GetComponentsInChildren<Collider2D>();
+        foreach (Collider2D col in cols)
+        {
+            col.enabled = false;
+        }
 
         if (FxManager.singleton != null) FxManager.singleton.SpawnHit(transform.position, HitKind.Tank);
         if (SfxManager.singleton != null) SfxManager.singleton.PlayExplosion();

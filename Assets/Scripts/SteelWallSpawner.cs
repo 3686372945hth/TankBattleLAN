@@ -26,15 +26,19 @@ public class SteelWallSpawner : MonoBehaviour
 
     private bool borderSpawned = false;
     private bool randomSpawned = false;
+    private int randomSeed = -1;
 
-    // 边框物体单独登记，清理时只动边框，不影响随机钢墙
     private readonly List<GameObject> borderObjects = new List<GameObject>();
-
-    // 内部随机钢墙的位置，服务端生成后供砖墙避让使用
+    private readonly List<GameObject> randomObjects = new List<GameObject>();
     private readonly List<Vector2> randomPositions = new List<Vector2>();
 
     void Awake()
     {
+        if (singleton != null && singleton != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
         singleton = this;
     }
 
@@ -44,7 +48,6 @@ public class SteelWallSpawner : MonoBehaviour
         if (borderSpawned) return;
         borderSpawned = true;
 
-        // 只清理上一局遗留的边框，不动随机钢墙
         foreach (GameObject old in borderObjects)
         {
             if (old != null) Destroy(old);
@@ -75,18 +78,21 @@ public class SteelWallSpawner : MonoBehaviour
         }
     }
 
-    // 内部随机钢墙：两端用同一个 seed，算出同一批位置
+    // 内部随机钢墙，两端用同一个 seed 生成同一批位置；种子晚到时可清旧重生成
     public void SpawnRandomWalls(int seed)
     {
-        if (randomSpawned) return;
+        if (seed == randomSeed && randomSpawned) return;
+
+        ClearRandomWalls();
+        randomSeed = seed;
         randomSpawned = true;
 
-        randomPositions.Clear();
         randomPositions.AddRange(BuildRandomPositions(seed));
 
         foreach (Vector2 p in randomPositions)
         {
-            Instantiate(steelWallPrefab, new Vector3(p.x, p.y, 0f), Quaternion.identity, transform);
+            GameObject wall = Instantiate(steelWallPrefab, new Vector3(p.x, p.y, 0f), Quaternion.identity, transform);
+            randomObjects.Add(wall);
         }
     }
 
@@ -97,11 +103,20 @@ public class SteelWallSpawner : MonoBehaviour
         {
             if (Vector2.Distance(p, w) < radius) return true;
         }
-
         return false;
     }
 
-    // 纯计算，不实例化，服务端和客户端算出来的结果必须完全一致
+    void ClearRandomWalls()
+    {
+        foreach (GameObject w in randomObjects)
+        {
+            if (w != null) Destroy(w);
+        }
+        randomObjects.Clear();
+        randomPositions.Clear();
+    }
+
+    // 纯计算，服务端和客户端算出来的结果必须完全一致
     List<Vector2> BuildRandomPositions(int seed)
     {
         List<Vector2> result = new List<Vector2>();

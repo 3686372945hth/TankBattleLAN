@@ -7,7 +7,10 @@ public class CustomNetworkManager : NetworkManager
 
     public static bool quitting = false;
 
-    [Header("基地配置")]
+    // 本局是否已成功加入对局，用于区分“未进对局的连接失败”和“对局中断线”
+    public static bool matchJoined = false;
+
+    [Header("基地预制体")]
     public GameObject basePrefab;
 
     private int mapSeed = 0;
@@ -15,29 +18,30 @@ public class CustomNetworkManager : NetworkManager
     public override void Awake()
     {
         base.Awake();
-
-        if (this != null)
-        {
-            singleton = this;
-        }
+        singleton = this;
     }
 
     public override void OnStartServer()
     {
         base.OnStartServer();
         quitting = false;
+        matchJoined = false;
 
-        // 每局换一个种子，两端据此算出同一张地图
+        // 每局只生成一次，双方共用同一个种子，保证同一张地图
         mapSeed = Random.Range(1000, int.MaxValue);
         if (mapSeed <= 0) mapSeed = 12345;
 
-        // 顺序很重要：先放随机钢墙，砖墙才能避让
+        // 顺序：先确定随机钢墙位置，再生成砖墙（砖墙避让钢墙）
         if (SteelWallSpawner.singleton != null)
         {
             SteelWallSpawner.singleton.SpawnRandomWalls(mapSeed);
         }
 
-        BrickSpawner.singleton.ServerSpawnBricks();
+        if (BrickSpawner.singleton != null)
+        {
+            BrickSpawner.singleton.ServerSpawnBricks();
+        }
+
         SpawnBases();
 
         if (SteelWallSpawner.singleton != null)
@@ -51,6 +55,7 @@ public class CustomNetworkManager : NetworkManager
         base.OnClientConnect();
 
         quitting = false;
+        matchJoined = false;
 
         if (SteelWallSpawner.singleton != null)
         {
@@ -68,20 +73,37 @@ public class CustomNetworkManager : NetworkManager
         base.OnClientDisconnect();
 
         if (quitting) return;
-        if (GameManager.singleton == null) return;
-        if (GameManager.singleton.isGameOver) return;
 
-        GameManager.singleton.ShowGameOverUI("房主已断开", TankController.ResultOpponentLeft);
+        // 未成功加入对局：连接失败 / 被满员拒绝，提示重新显示主菜单，不弹结算面板
+        if (!matchJoined)
+        {
+            matchJoined = false;
+            if (MenuManager.singleton != null)
+            {
+                MenuManager.singleton.ShowConnectFailed();
+            }
+            return;
+        }
+
+        // 对局中断线：胜负以服务端 SyncVar 结果为准，本地仅兜底
+        matchJoined = false;
+        if (GameManager.singleton == null || GameManager.singleton.isGameOver) return;
+
+        GameManager.singleton.ShowGameOverUI("对手已退出", TankController.ResultOpponentLeft);
     }
 
     void SpawnBases()
     {
+        if (basePrefab == null) return;
+
         GameObject leftBase = Instantiate(basePrefab, new Vector3(-MapConfig.BaseX, 0f, 0f), Quaternion.identity);
-        leftBase.GetComponent<Base>().ownerSlot = 0;
+        Base left = leftBase.GetComponent<Base>();
+        if (left != null) left.ownerSlot = 0;
         NetworkServer.Spawn(leftBase);
 
         GameObject rightBase = Instantiate(basePrefab, new Vector3(MapConfig.BaseX, 0f, 0f), Quaternion.identity);
-        rightBase.GetComponent<Base>().ownerSlot = 1;
+        Base right = rightBase.GetComponent<Base>();
+        if (right != null) right.ownerSlot = 1;
         NetworkServer.Spawn(rightBase);
     }
 
@@ -121,6 +143,15 @@ public class CustomNetworkManager : NetworkManager
 
     public override void OnServerAddPlayer(NetworkConnectionToClient conn)
     {
+        // 满员拒绝新连接，不分配玩家，也不占用玩家槽位
+        if (CountPlayers() >= 2)
+        {
+            conn.Disconnect();
+            return;
+        }
+
+        if (playerPrefab == null) return;
+
         int slot = FindFreeSlot();
 
         Vector3 spawnPos = slot == 0
@@ -147,6 +178,9 @@ public class CustomNetworkManager : NetworkManager
     public override void OnServerDisconnect(NetworkConnectionToClient conn)
     {
         base.OnServerDisconnect(conn);
+
+        // 被拒绝的连接没有玩家身份，不参与对局退出结算
+        if (conn == null || conn.identity == null) return;
 
         if (GameManager.singleton != null)
         {

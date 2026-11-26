@@ -8,6 +8,11 @@ public class TouchInputManager : MonoBehaviour
 
     void Awake()
     {
+        if (singleton != null && singleton != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
         singleton = this;
     }
 
@@ -24,19 +29,5 @@ public class TouchInputManager : MonoBehaviour
         {
             localTank.TryFire();
         }
-    }
-
-    // 获取摇杆移动输入（对应坦克前后移动）
-    public float GetMoveInput()
-    {
-        if (Joystick.singleton == null) return 0;
-        return Joystick.singleton.Vertical;
-    }
-
-    // 获取摇杆旋转输入（对应坦克左右旋转）
-    public float GetRotateInput()
-    {
-        if (Joystick.singleton == null) return 0;
-        return Joystick.singleton.Horizontal;
     }
 }

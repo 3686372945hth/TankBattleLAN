@@ -17,6 +17,11 @@ public class BrickSpawner : MonoBehaviour
 
     void Awake()
     {
+        if (singleton != null && singleton != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
         singleton = this;
     }
 

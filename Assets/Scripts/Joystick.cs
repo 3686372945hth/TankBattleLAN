@@ -17,9 +17,16 @@ public class Joystick : MonoBehaviour, IDragHandler, IPointerUpHandler, IPointer
 
     void Awake()
     {
+        if (singleton != null && singleton != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
         singleton = this;
         bgRect = GetComponent<RectTransform>();
-        handleRect = transform.Find("JoystickHandle").GetComponent<RectTransform>();
+
+        Transform handle = transform.Find("JoystickHandle");
+        handleRect = handle != null ? handle.GetComponent<RectTransform>() : null;
     }
 
     // 按下摇杆
@@ -35,8 +42,13 @@ public class Joystick : MonoBehaviour, IDragHandler, IPointerUpHandler, IPointer
         RectTransformUtility.ScreenPointToLocalPointInRectangle(
             bgRect, eventData.position, eventData.pressEventCamera, out localPos);
 
-        // 计算方向并限制最大半径
-        Vector2 direction = localPos / (bgRect.sizeDelta.x / 2f);
+        // 纵横分别按背景半宽 / 半高归一化，非方形背景下量程准确
+        float halfW = bgRect.sizeDelta.x * 0.5f;
+        float halfH = bgRect.sizeDelta.y * 0.5f;
+        if (halfW < 0.01f) halfW = 0.01f;
+        if (halfH < 0.01f) halfH = 0.01f;
+
+        Vector2 direction = new Vector2(localPos.x / halfW, localPos.y / halfH);
         if (direction.magnitude > 1f)
         {
             direction = direction.normalized;
@@ -45,8 +57,10 @@ public class Joystick : MonoBehaviour, IDragHandler, IPointerUpHandler, IPointer
         Horizontal = direction.x;
         Vertical = direction.y;
 
-        // 更新摇杆头位置
-        handleRect.anchoredPosition = direction * handleRange;
+        if (handleRect != null)
+        {
+            handleRect.anchoredPosition = direction * handleRange;
+        }
     }
 
     // 松开摇杆，回中归零
@@ -54,6 +68,10 @@ public class Joystick : MonoBehaviour, IDragHandler, IPointerUpHandler, IPointer
     {
         Horizontal = 0;
         Vertical = 0;
-        handleRect.anchoredPosition = Vector2.zero;
+
+        if (handleRect != null)
+        {
+            handleRect.anchoredPosition = Vector2.zero;
+        }
     }
 }

@@ -15,10 +15,10 @@ public class GameManager : MonoBehaviour
     public TMP_Text resultText;
 
     [Header("调试")]
-    [Tooltip("在屏幕左上角显示每台坦克的血量（仅联调时打开）")]
+    [Tooltip("在屏幕左上角显示每台坦克的血量，仅调试时开启")]
     public bool showDebugHp = false;
 
-    [Tooltip("联网事件、返回菜单等逐帧打印调试日志（仅联调时打开）")]
+    [Tooltip("在关键流程打印详细日志，排查问题时开启")]
     public bool verboseLog = false;
 
     [System.NonSerialized] public bool isGameOver;
@@ -28,18 +28,22 @@ public class GameManager : MonoBehaviour
     private bool matchStarted;
     private float nextHeartbeat;
 
-    // 开局倒计时文字与协程
     private TextMeshProUGUI countdownText;
     private Coroutine countdownRoutine;
     private Coroutine hideCountdownRoutine;
 
     void Awake()
     {
-        // 定稿强制关闭调试面板与刷屏日志，覆盖场景里残留的勾选值
+        if (singleton != null && singleton != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        singleton = this;
+
+        // 强制关闭调试面板与详细日志，避免场景里勾选的旧值残留
         showDebugHp = false;
         verboseLog = false;
-
-        singleton = this;
 
         if (verboseLog)
         {
@@ -105,22 +109,15 @@ public class GameManager : MonoBehaviour
 
     void Update()
     {
-#if UNITY_EDITOR
-        if (!isGameOver && Input.GetKeyDown(KeyCode.F1))
-        {
-            ShowGameOverUI("测试胜利", TankController.ResultWin);
-        }
-#endif
-
         if (!isGameOver) return;
 
         if (verboseLog && Time.unscaledTime >= nextHeartbeat)
         {
             nextHeartbeat = Time.unscaledTime + 0.5f;
             Vector3 mp = Input.mousePosition;
-            Debug.Log("[GM] 结算 鼠标=(" + mp.x + "," + mp.y + ")"
-                      + " 按压=" + Input.GetMouseButton(0)
-                      + " 触控=" + Input.touchCount
+            Debug.Log("[GM] 鼠标 位置=(" + mp.x + "," + mp.y + ")"
+                      + " 左键=" + Input.GetMouseButton(0)
+                      + " 触摸=" + Input.touchCount
                       + " EventSystem=" + (EventSystem.current != null));
         }
 
@@ -136,7 +133,7 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // 调试用：屏幕左上角显示每台坦克的血量
+    // 调试用：在屏幕左上角显示每台坦克的血量
     void OnGUI()
     {
         if (!showDebugHp) return;
@@ -163,7 +160,7 @@ public class GameManager : MonoBehaviour
         if (!NetworkServer.active) return;
         matchStarted = true;
 
-        if (verboseLog) Debug.Log("[GM] 对局开始，启动开局倒计时");
+        if (verboseLog) Debug.Log("[GM] 对局开始，准备进入倒数");
 
         if (countdownRoutine != null) StopCoroutine(countdownRoutine);
         countdownRoutine = StartCoroutine(ServerCountdownRoutine());
@@ -194,7 +191,7 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // 由坦克 SyncVar hook 回调，在两端本地刷新倒计时显示
+    // 通过 SyncVar hook 在客户端触发，刷新本地的倒数显示
     public void SetCountdownStage(int stage)
     {
         if (countdownText == null) return;
@@ -240,11 +237,23 @@ public class GameManager : MonoBehaviour
         if (countdownText != null) countdownText.gameObject.SetActive(false);
     }
 
+    // 对局结束时停止仍在进行的倒数协程
+    void StopCountdown()
+    {
+        if (countdownRoutine != null)
+        {
+            StopCoroutine(countdownRoutine);
+            countdownRoutine = null;
+        }
+    }
+
     public void ServerEndGame(NetworkConnectionToClient winnerConn)
     {
         if (!NetworkServer.active) return;
         if (serverEnded) return;
         serverEnded = true;
+
+        StopCountdown();
 
         if (verboseLog)
         {
@@ -281,6 +290,7 @@ public class GameManager : MonoBehaviour
         if (others == 0) return;
 
         serverEnded = true;
+        StopCountdown();
 
         foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
         {
@@ -298,7 +308,7 @@ public class GameManager : MonoBehaviour
     {
         if (verboseLog)
         {
-            Debug.Log("[GM] ShowGameOverUI 面板 id=" + GetInstanceID()
+            Debug.Log("[GM] ShowGameOverUI 实例 id=" + GetInstanceID()
                       + " state=" + state
                       + " active=" + gameObject.activeInHierarchy
                       + " componentEnabled=" + enabled
@@ -309,14 +319,14 @@ public class GameManager : MonoBehaviour
         isGameOver = true;
         nextHeartbeat = 0f;
 
-        // 收起触屏输入，避免摇杆和返回菜单按钮同时抢点击
+        // 结算时禁用触屏操作面板，避免开火按钮与返回菜单按钮同时响应
         if (TouchInputManager.singleton != null && TouchInputManager.singleton.gameObject.activeSelf)
         {
             TouchInputManager.singleton.gameObject.SetActive(false);
-            if (verboseLog) Debug.Log("[GM] 已收起 TouchInputManager");
+            if (verboseLog) Debug.Log("[GM] 已禁用触屏输入");
         }
 
-        // 面板置顶并自己接管点击，确保任意点击都能返回菜单
+        // 结算面板置顶，并保证整面板可点击，点击任意位置返回菜单
         if (gameOverPanel != null)
         {
             gameOverPanel.transform.SetAsLastSibling();
@@ -333,7 +343,7 @@ public class GameManager : MonoBehaviour
             panelButton.onClick.RemoveAllListeners();
             panelButton.onClick.AddListener(ReturnToMenu);
 
-            if (verboseLog) Debug.Log("[GM] 已挂载返回按钮");
+            if (verboseLog) Debug.Log("[GM] 已绑定结算面板按钮");
         }
 
         if (resultText != null)
@@ -344,11 +354,12 @@ public class GameManager : MonoBehaviour
             if (state == TankController.ResultWin) head = "胜利";
             else if (state == TankController.ResultLose) head = "失败";
 
-            resultText.text = head.Length > 0 ? head + "\n" + resultStr : resultText.text;
+            // 对手退出时没有标题，直接显示副标题；其余情况标题 + 副标题
+            resultText.text = head.Length > 0 ? head + "\n" + resultStr : resultStr;
         }
     }
 
-    // 点按钮 / 点屏幕返回菜单：先停网络，等状态归零再重载场景
+    // 点击按钮 / 点屏幕返回菜单；防重入，场景被禁用时走同步兜底
     public void ReturnToMenu()
     {
         if (returning) return;
@@ -356,7 +367,7 @@ public class GameManager : MonoBehaviour
 
         CustomNetworkManager.quitting = true;
 
-        // 关键：若组件已被禁用（断线时 Mirror 会清理物体），协程无法启动，直接走同步路径
+        // 组件尚未激活时，等待期间 Mirror 可能已经清理禁用，无法走协程，直接同步处理
         if (!isActiveAndEnabled)
         {
             if (verboseLog) Debug.Log("[GM] 组件未激活，走同步返回");
@@ -378,7 +389,7 @@ public class GameManager : MonoBehaviour
             NetworkManager nm = NetworkManager.singleton;
             if (verboseLog)
             {
-                Debug.Log("[GM] 停止网络 前 clientActive=" + NetworkClient.active
+                Debug.Log("[GM] 停止网络前 clientActive=" + NetworkClient.active
                           + " serverActive=" + NetworkServer.active);
             }
 
@@ -409,7 +420,7 @@ public class GameManager : MonoBehaviour
 
         if (verboseLog)
         {
-            Debug.Log("[GM] 停止网络 后 clientActive=" + NetworkClient.active
+            Debug.Log("[GM] 停止网络后 clientActive=" + NetworkClient.active
                       + " serverActive=" + NetworkServer.active);
         }
 
@@ -425,18 +436,18 @@ public class GameManager : MonoBehaviour
 
             if (verboseLog)
             {
-                Debug.Log("[GM] 场景返回 name=" + sceneName + " index=" + sceneIndex);
+                Debug.Log("[GM] 加载场景 name=" + sceneName + " index=" + sceneIndex);
             }
 
             if (sceneIndex >= 0) SceneManager.LoadScene(sceneIndex);
             else SceneManager.LoadScene(sceneName);
 
-            if (verboseLog) Debug.Log("[GM] LoadScene 已触发");
+            if (verboseLog) Debug.Log("[GM] LoadScene 已调用");
         }
         catch (System.Exception e)
         {
-            Debug.LogError("[GM] 场景返回异常: " + e);
-            if (resultText != null) resultText.text = "返回菜单出错: " + e.Message;
+            Debug.LogError("[GM] 加载场景异常: " + e);
+            if (resultText != null) resultText.text = "返回菜单失败: " + e.Message;
             returning = false;
         }
     }

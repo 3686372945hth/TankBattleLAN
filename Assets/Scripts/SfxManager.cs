@@ -25,6 +25,11 @@ public class SfxManager : MonoBehaviour
 
     void Awake()
     {
+        if (singleton != null && singleton != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
         singleton = this;
 
         source = gameObject.AddComponent<AudioSource>();

@@ -8,15 +8,13 @@ public class TankController : NetworkBehaviour
     public const int ResultLose = -1;
     public const int ResultOpponentLeft = 2;
 
-    // 0 = 未分配，1/2 = 双方槽位；由服务端写入，客机只读
     [SyncVar]
     public int playerSlot = -1;
 
-    // 随机钢墙种子，两端用同一 seed 算出同一批位置
-    [SyncVar]
+    // 地图种子：两端用同一个 seed 生成同一套布局
+    [SyncVar(hook = nameof(OnMapSeedChanged))]
     public int mapSeed = 0;
 
-    // 倒计时阶段：0 未开始，1/2/3 倒数，4 开战
     [SyncVar(hook = nameof(OnCountdownStageChanged))]
     public int countdownStage = 0;
 
@@ -25,7 +23,7 @@ public class TankController : NetworkBehaviour
     public float keyboardRotateSpeed = 180f;
     public float joystickRotateSpeed = 480f;
 
-    [Header("开火参数")]
+    [Header("射击参数")]
     public GameObject bulletPrefab;
     public Transform firePoint;
     public float fireCooldown = 0.5f;
@@ -37,6 +35,7 @@ public class TankController : NetworkBehaviour
     private Color tankColor;
 
     private float lastFireTime;
+    private float lastServerFireTime;
     private Rigidbody2D rb;
     private SpriteRenderer tankSprite;
     private Vector2 joystickDir;
@@ -44,7 +43,6 @@ public class TankController : NetworkBehaviour
     private float moveInput;
     private float rotateInput;
 
-    // 是否处于倒计时阶段
     public bool IsCountingDown => countdownStage >= 1 && countdownStage < 4;
 
     void Awake()
@@ -60,27 +58,39 @@ public class TankController : NetworkBehaviour
         tankColor = playerSlot == 0
             ? new Color(0.2f, 0.4f, 1f)
             : new Color(1f, 0.4f, 0.4f);
+
+        if (tankSprite != null) tankSprite.color = tankColor;
     }
 
     public override void OnStartLocalPlayer()
     {
         base.OnStartLocalPlayer();
 
+        CustomNetworkManager.matchJoined = true;
+
         if (TouchInputManager.singleton != null)
         {
             TouchInputManager.singleton.BindLocalTank(this);
         }
 
-        // 客机拿到种子后生成同一批随机钢墙
         if (SteelWallSpawner.singleton != null)
         {
             SteelWallSpawner.singleton.SpawnRandomWalls(mapSeed);
         }
 
-        // 同步当前倒计时阶段，hook 只在变化时触发
         if (GameManager.singleton != null)
         {
             GameManager.singleton.SetCountdownStage(countdownStage);
+        }
+    }
+
+    void OnMapSeedChanged(int oldSeed, int newSeed)
+    {
+        if (!isLocalPlayer) return;
+
+        if (SteelWallSpawner.singleton != null)
+        {
+            SteelWallSpawner.singleton.SpawnRandomWalls(newSeed);
         }
     }
 
@@ -222,6 +232,17 @@ public class TankController : NetworkBehaviour
     [Command]
     void CmdFire()
     {
+        // 服务端兜底：对局已结束，不再生成子弹
+        if (GameManager.singleton != null && GameManager.singleton.isGameOver) return;
+
+        // 本人已阵亡，不再开火
+        TankHealth health = GetComponent<TankHealth>();
+        if (health != null && health.isDead) return;
+
+        // 服务端独立冷却，防止客户端绕过本地冷却连发
+        if (Time.time - lastServerFireTime < fireCooldown) return;
+        lastServerFireTime = Time.time;
+
         GameObject bullet = Instantiate(bulletPrefab, firePoint.position, firePoint.rotation);
         NetworkServer.Spawn(bullet, connectionToClient);
 
@@ -231,11 +252,8 @@ public class TankController : NetworkBehaviour
             bulletRb.velocity = firePoint.up * 12f;
         }
 
-        // 主机/服务端本地直接播开火音，Rpc 只下发远程客机
         LocalPlayShot();
         RpcPlayShot();
-
-        Destroy(bullet, 2f);
     }
 
     void LocalPlayShot()
@@ -249,12 +267,15 @@ public class TankController : NetworkBehaviour
     [ClientRpc]
     void RpcPlayShot()
     {
-        if (isServer) return; // 主机/服务端已本地播过，避免重复
+        if (isServer) return;
         LocalPlayShot();
     }
 
     void OnColorChanged(Color oldColor, Color newColor)
     {
-        tankSprite.color = newColor;
+        if (tankSprite != null)
+        {
+            tankSprite.color = newColor;
+        }
     }
 }

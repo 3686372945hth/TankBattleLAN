@@ -171,4 +171,5 @@ MonoBehaviour:
   syncDirection: 0
   syncMode: 0
   syncInterval: 0
-  ownerConnectionId: 0
+  ownerSlot: 0
+  destroyed: 0
